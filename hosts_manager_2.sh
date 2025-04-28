@@ -64,18 +64,35 @@ backup_hosts() {
     fi
 }
 
-# --- Новый пункт: Создать бэкап без операций ---
-create_backup_menu() {
-    check_space "$BACKUP_DIR" "$MIN_FREE_MB"
+# --- Операции с правами ---
+check_permissions() {
+    log "${CYAN}Текущие права доступа:${RESET}"
+    print "------------------------------"
+    ls -le "$HOSTS_FILE" | sudo tee -a "$LOG_FILE"
+    print "------------------------------"
+}
 
-    print -P "%B${YELLOW}Создать бэкап файла hosts? [y/N]: ${RESET}%b"
+grant_permissions() {
+    print -P "%B${YELLOW}Дать права на запись файлу hosts? [y/N]: ${RESET}%b"
     read -q confirm
     print
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        backup_hosts
-        log "${GREEN}Бэкап успешно создан.${RESET}"
+        sudo /bin/chmod +a "user:$(whoami):allow write" "$HOSTS_FILE" && \
+        log "${GREEN}Права на запись добавлены!${RESET}"
     else
-        log "${YELLOW}Создание бэкапа отменено пользователем.${RESET}"
+        log "${YELLOW}Отмена операции.${RESET}"
+    fi
+}
+
+revoke_permissions() {
+    print -P "%B${YELLOW}Забрать права на запись? [y/N]: ${RESET}%b"
+    read -q confirm
+    print
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        sudo /bin/chmod -a "user:$(whoami):allow write" "$HOSTS_FILE" && \
+        log "${GREEN}Права на запись отозваны!${RESET}"
+    else
+        log "${YELLOW}Отмена операции.${RESET}"
     fi
 }
 
@@ -143,11 +160,16 @@ print_header() {
 
 print_menu() {
     print -P "%B${YELLOW}Выберите действие:%b"
-    print -P "  ${GREEN}1)${RESET} Сбросить файл hosts к значениям по умолчанию"
+    print -P "  ${GREEN}1)${RESET} Сбросить к значениям по умолчанию"
     print -P "  ${GREEN}2)${RESET} Восстановить из резервной копии"
     print -P "  ${GREEN}3)${RESET} Показать текущее содержимое"
-    print -P "  ${GREEN}4)${RESET} Выйти из программы"
-    print -P "  ${GREEN}5)${RESET} Создать бэкап файла hosts"
+    print -P "  ${GREEN}4)${RESET} Создать бэкап файла"
+    print -P "  ${CYAN}--- Управление правами ---${RESET}"
+    print -P "  ${GREEN}5)${RESET} Проверить права доступа"
+    print -P "  ${GREEN}6)${RESET} Разрешить редактирование"
+    print -P "  ${GREEN}7)${RESET} Запретить редактирование"
+    print -P "  ${CYAN}--------------------------${RESET}"
+    print -P "  ${GREEN}8)${RESET} Выйти из программы"
 }
 
 # --- Главный цикл ---
@@ -164,8 +186,11 @@ main() {
             1) reset_hosts ;;
             2) restore_hosts ;;
             3) show_hosts ;;
-            4) break ;;
-            5) create_backup_menu ;;
+            4) backup_hosts ;;
+            5) check_permissions ;;
+            6) grant_permissions ;;
+            7) revoke_permissions ;;
+            8) break ;;
             *) print -P "${RED}Некорректный выбор!${RESET}"; sleep 1 ;;
         esac
 
