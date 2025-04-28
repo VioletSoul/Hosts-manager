@@ -64,16 +64,31 @@ backup_hosts() {
     fi
 }
 
+# --- Новый пункт: Создать бэкап без операций ---
+create_backup_menu() {
+    check_space "$BACKUP_DIR" "$MIN_FREE_MB"
+
+    print -P "%B${YELLOW}Создать бэкап файла hosts? [y/N]: ${RESET}%b"
+    read -q confirm
+    print
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        backup_hosts
+        log "${GREEN}Бэкап успешно создан.${RESET}"
+    else
+        log "${YELLOW}Создание бэкапа отменено пользователем.${RESET}"
+    fi
+}
+
 # --- Основные операции ---
 reset_hosts() {
     check_space "$LOG_FILE" "$MIN_FREE_MB"
-    
+
     print -P "%B${YELLOW}Сбросить файл hosts? [y/N]: ${RESET}%b"
     read -q || return
     print
-    
+
     backup_hosts
-    
+
     log "${CYAN}Сброс файла hosts...${RESET}"
     sudo tee "$HOSTS_FILE" >/dev/null <<'EOF'
 ##
@@ -86,7 +101,7 @@ reset_hosts() {
 255.255.255.255 broadcasthost
 ::1             localhost
 EOF
-    
+
     sudo killall -HUP mDNSResponder 2>/dev/null
     log "${GREEN}Успешно сброшено!${RESET}"
     show_hosts
@@ -94,17 +109,17 @@ EOF
 
 restore_hosts() {
     check_space "$LOG_FILE" "$MIN_FREE_MB"
-    
+
     print -P "%B${YELLOW}Восстановить из резервной копии? [y/N]: ${RESET}%b"
     read -q || return
     print
-    
+
     local latest_backup=($BACKUP_DIR/hosts.backup.*(N.Om[1]))
     [[ -n "$latest_backup" ]] || die "Резервные копии не найдены"
-    
+
     log "${CYAN}Восстанавливаем из:${RESET} $latest_backup"
     sudo cp "$latest_backup" "$HOSTS_FILE" || die "Ошибка восстановления"
-    
+
     sudo killall -HUP mDNSResponder 2>/dev/null
     log "${GREEN}Успешно восстановлено!${RESET}"
     show_hosts
@@ -132,33 +147,34 @@ print_menu() {
     print -P "  ${GREEN}2)${RESET} Восстановить из резервной копии"
     print -P "  ${GREEN}3)${RESET} Показать текущее содержимое"
     print -P "  ${GREEN}4)${RESET} Выйти из программы"
+    print -P "  ${GREEN}5)${RESET} Создать бэкап файла hosts"
 }
 
 # --- Главный цикл ---
 main() {
     check_requirements
-    
+
     while true; do
         print_header
         print_menu
         print -P "%B${YELLOW}Ваш выбор: ${RESET}%b"
         read -r choice
-        
+
         case "$choice" in
             1) reset_hosts ;;
             2) restore_hosts ;;
             3) show_hosts ;;
             4) break ;;
+            5) create_backup_menu ;;
             *) print -P "${RED}Некорректный выбор!${RESET}"; sleep 1 ;;
         esac
-        
+
         print -P "\n${CYAN}Нажмите Enter для продолжения...${RESET}"
         read -r
     done
-    
+
     log "${GREEN}Работа завершена.${RESET}"
 }
 
 # --- Точка входа ---
 main "$@"
-
