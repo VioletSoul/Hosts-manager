@@ -10,4 +10,7 @@ Then, you can run it using:
 './hosts_manager_2.sh'
 
 This will ensure the script has the necessary permissions to execute properly.
+
+Note:
+If you do not specify the full path when exporting a file, but only the file name, the file will be saved in the directory from which the script is executed.
 # ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄
