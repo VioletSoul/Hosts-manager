@@ -30,7 +30,7 @@ die() {
 
 # --- Checks ---
 check_requirements() {
-    local cmds=("sudo" "cp" "tee" "killall" "awk" "df")
+    local cmds=("sudo" "cp" "tee" "killall" "awk" "df" "sed" "ls" "head")
     for cmd in "${cmds[@]}"; do
         command -v "$cmd" >/dev/null || die "Command not found: $cmd"
     done
@@ -42,26 +42,145 @@ check_space() {
     local dir=$(dirname "$1")
     local required=$2
     local available_mb=$(df -m "$dir" | awk 'NR==2 {print $4}')
-    (( available_mb >= required )) || die "Нужно ${required}MB в ${dir} (доступно ${available_mb}MB)"
+    (( available_mb >= required )) || die "Need at least ${required}MB free in ${dir} (available ${available_mb}MB)"
 }
 
 # --- Backups ---
 backup_hosts() {
     check_space "$BACKUP_DIR" "$MIN_FREE_MB"
-    
+
     local backup_file="$BACKUP_DIR/hosts.backup.$(date +%Y%m%d%H%M%S)"
-    log "${CYAN}Create a backup:${RESET} $backup_file"
-    
+    log "${CYAN}Creating backup:${RESET} $backup_file"
+
     sudo cp "$HOSTS_FILE" "$backup_file" || die "Copy error"
-    
+
     # Backup rotation
     local backups=($BACKUP_DIR/hosts.backup.*(N.Om))
     if (( ${#backups} > MAX_BACKUPS )); then
-        log "${YELLOW}Delete old copies...${RESET}"
+        log "${YELLOW}Deleting old backups...${RESET}"
         for file in "${backups[@]:$MAX_BACKUPS}"; do
             sudo rm -f "$file" && log "Deleted: $file"
         done
     fi
+}
+
+list_backups() {
+    local backups=($BACKUP_DIR/hosts.backup.*(N.Om))
+    if (( ${#backups} == 0 )); then
+        print "${YELLOW}No backups found.${RESET}"
+        return 1
+    fi
+    print "${CYAN}Available backups:${RESET}"
+    local i=1
+    for bkp in $backups; do
+        print "  $i) $(basename $bkp)"
+        ((i++))
+    done
+    return 0
+}
+
+restore_hosts() {
+    check_space "$LOG_FILE" "$MIN_FREE_MB"
+
+    if ! list_backups; then
+        return
+    fi
+
+    print -P "%B${YELLOW}Enter backup number to restore (or press Enter to cancel): ${RESET}%b"
+    read choice
+    if [[ -z "$choice" ]]; then
+        log "${YELLOW}Restore cancelled.${RESET}"
+        return
+    fi
+
+    local backups=($BACKUP_DIR/hosts.backup.*(N.Om))
+    if (( choice < 1 || choice > ${#backups} )); then
+        print "${RED}Invalid choice.${RESET}"
+        return
+    fi
+
+    local selected_backup=${backups[$choice]}
+    log "${CYAN}Restoring from:${RESET} $selected_backup"
+    sudo cp "$selected_backup" "$HOSTS_FILE" || die "Restore error"
+
+    sudo killall -HUP mDNSResponder 2>/dev/null
+    log "${GREEN}Successfully restored!${RESET}"
+    show_hosts
+}
+
+# --- Hosts entries management ---
+
+add_host_entry() {
+    print -P "%B${YELLOW}Enter IP address to add:${RESET}%b"
+    read ip
+    print -P "%B${YELLOW}Enter hostname:${RESET}%b"
+    read host
+    if [[ -z "$ip" || -z "$host" ]]; then
+        log "${RED}IP or hostname cannot be empty.${RESET}"
+        return
+    fi
+
+    # Simple IP validation (IPv4)
+    if ! [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        log "${RED}Invalid IP format.${RESET}"
+        return
+    fi
+
+    backup_hosts
+    echo "$ip    $host" | sudo tee -a "$HOSTS_FILE" >/dev/null
+    log "${GREEN}Added entry: $ip $host${RESET}"
+    sudo killall -HUP mDNSResponder 2>/dev/null
+}
+
+remove_host_entry() {
+    print -P "%B${YELLOW}Enter hostname or IP to remove:${RESET}%b"
+    read target
+    if [[ -z "$target" ]]; then
+        log "${RED}Input cannot be empty.${RESET}"
+        return
+    fi
+
+    backup_hosts
+    # sed -i not portable on macOS, use backup file and move
+    sudo sed "/$target/d" "$HOSTS_FILE" | sudo tee "$HOSTS_FILE.tmp" >/dev/null
+    sudo mv "$HOSTS_FILE.tmp" "$HOSTS_FILE"
+    log "${GREEN}Removed entries matching: $target${RESET}"
+    sudo killall -HUP mDNSResponder 2>/dev/null
+}
+
+# --- Basic Operations ---
+reset_hosts() {
+    check_space "$LOG_FILE" "$MIN_FREE_MB"
+
+    print -P "%B${YELLOW}Reset hosts file? [y/N]: ${RESET}%b"
+    read -q || return
+    print
+
+    backup_hosts
+
+    log "${CYAN}Resetting hosts file...${RESET}"
+    sudo tee "$HOSTS_FILE" >/dev/null <<'EOF'
+##
+# Host Database
+#
+# localhost is used to configure the loopback interface
+# when the system is booting.  Do not change this entry.
+##
+127.0.0.1       localhost
+255.255.255.255 broadcasthost
+::1             localhost
+EOF
+
+    sudo killall -HUP mDNSResponder 2>/dev/null
+    log "${GREEN}Successfully reset!${RESET}"
+    show_hosts
+}
+
+show_hosts() {
+    log "${CYAN}Current content:${RESET}"
+    print "------------------------------"
+    sudo cat "$HOSTS_FILE"
+    print "------------------------------"
 }
 
 # --- Operations with rights ---
@@ -80,73 +199,20 @@ grant_permissions() {
         sudo /bin/chmod +a "user:$(whoami):allow write" "$HOSTS_FILE" && \
         log "${GREEN}Write permissions added!${RESET}"
     else
-        log "${YELLOW}Canceling an operation.${RESET}"
+        log "${YELLOW}Operation cancelled.${RESET}"
     fi
 }
 
 revoke_permissions() {
-    print -P "%B${YELLOW}Take away write permissions? [y/N]: ${RESET}%b"
+    print -P "%B${YELLOW}Remove write permissions? [y/N]: ${RESET}%b"
     read -q confirm
     print
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         sudo /bin/chmod -a "user:$(whoami):allow write" "$HOSTS_FILE" && \
-        log "${GREEN}Recording rights revoked!${RESET}"
+        log "${GREEN}Write permissions revoked!${RESET}"
     else
-        log "${YELLOW}Canceling an operation.${RESET}"
+        log "${YELLOW}Operation cancelled.${RESET}"
     fi
-}
-
-# --- Basic Operations ---
-reset_hosts() {
-    check_space "$LOG_FILE" "$MIN_FREE_MB"
-
-    print -P "%B${YELLOW}Reset hosts file? [y/N]: ${RESET}%b"
-    read -q || return
-    print
-
-    backup_hosts
-
-    log "${CYAN}Reset hosts file...${RESET}"
-    sudo tee "$HOSTS_FILE" >/dev/null <<'EOF'
-##
-# Host Database
-#
-# localhost is used to configure the loopback interface
-# when the system is booting.  Do not change this entry.
-##
-127.0.0.1       localhost
-255.255.255.255 broadcasthost
-::1             localhost
-EOF
-
-    sudo killall -HUP mDNSResponder 2>/dev/null
-    log "${GREEN}Successfully reset!${RESET}"
-    show_hosts
-}
-
-restore_hosts() {
-    check_space "$LOG_FILE" "$MIN_FREE_MB"
-
-    print -P "%B${YELLOW}Restore from backup? [y/N]: ${RESET}%b"
-    read -q || return
-    print
-
-    local latest_backup=($BACKUP_DIR/hosts.backup.*(N.Om[1]))
-    [[ -n "$latest_backup" ]] || die "No backups found"
-
-    log "${CYAN}Restoring from:${RESET} $latest_backup"
-    sudo cp "$latest_backup" "$HOSTS_FILE" || die "Restore Error"
-
-    sudo killall -HUP mDNSResponder 2>/dev/null
-    log "${GREEN}Successfully restored!${RESET}"
-    show_hosts
-}
-
-show_hosts() {
-    log "${CYAN}Current content:${RESET}"
-    print "------------------------------"
-    sudo cat "$HOSTS_FILE"
-    print "------------------------------"
 }
 
 # --- Interface ---
@@ -159,17 +225,19 @@ print_header() {
 }
 
 print_menu() {
-    print -P "%B${YELLOW}Select action:%b"
+    print -P "%B${YELLOW}Select action:${RESET}%b"
     print -P "  ${GREEN}1)${RESET} Reset to defaults"
     print -P "  ${GREEN}2)${RESET} Restore from backup"
     print -P "  ${GREEN}3)${RESET} Show current content"
     print -P "  ${GREEN}4)${RESET} Create a backup file"
+    print -P "  ${GREEN}5)${RESET} Add host entry"
+    print -P "  ${GREEN}6)${RESET} Remove host entry"
     print -P "  ${CYAN}--- Rights management ---${RESET}"
-    print -P "  ${GREEN}5)${RESET} Check permissions"
-    print -P "  ${GREEN}6)${RESET} Allow editing"
-    print -P "  ${GREEN}7)${RESET} Disable editing"
+    print -P "  ${GREEN}7)${RESET} Check permissions"
+    print -P "  ${GREEN}8)${RESET} Allow editing"
+    print -P "  ${GREEN}9)${RESET} Disable editing"
     print -P "  ${CYAN}--------------------------${RESET}"
-    print -P "  ${GREEN}8)${RESET} Exit the program"
+    print -P "  ${GREEN}0)${RESET} Exit the program"
 }
 
 # --- Main loop ---
@@ -187,10 +255,12 @@ main() {
             2) restore_hosts ;;
             3) show_hosts ;;
             4) backup_hosts ;;
-            5) check_permissions ;;
-            6) grant_permissions ;;
-            7) revoke_permissions ;;
-            8) break ;;
+            5) add_host_entry ;;
+            6) remove_host_entry ;;
+            7) check_permissions ;;
+            8) grant_permissions ;;
+            9) revoke_permissions ;;
+            0) break ;;
             *) print -P "${RED}Incorrect choice!${RESET}"; sleep 1 ;;
         esac
 
