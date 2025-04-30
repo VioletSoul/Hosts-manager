@@ -1,4 +1,4 @@
-# ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄
+# ************
 A compact Bash module for reading, permission checking, and backing up the hosts file on your macOS when needed.
 The script is adapted for the Zsh shell.
 Support for adding/removing records, selecting a backup, checking syntax (IPv4 and IPv6), searching for duplicate IP-hostname pairs, export/import and rights management.
@@ -13,4 +13,4 @@ This will ensure the script has the necessary permissions to execute properly.
 
 Note:
 If you do not specify the full path when exporting a file, but only the file name, the file will be saved in the directory from which the script is executed.
-# ▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄▀▄
+# ************
