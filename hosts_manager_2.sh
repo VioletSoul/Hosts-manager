@@ -1,13 +1,13 @@
 #!/usr/bin/env zsh
 
-# --- Настройки ---
+# --- Settings ---
 HOSTS_FILE="/etc/hosts"
 BACKUP_DIR="/etc"
 LOG_FILE="$HOME/.hosts_manager.log"
 MAX_BACKUPS=5
 MIN_FREE_MB=50
 
-# --- Цветовые коды ---
+# --- Color codes ---
 autoload -U colors && colors
 
 RED="$fg[red]"
@@ -17,27 +17,27 @@ CYAN="$fg[cyan]"
 BOLD="$bold_color"
 RESET="$reset_color"
 
-# --- Логирование ---
+# --- Logging ---
 log() {
     local msg="$1"
     print -P "[%D{%Y-%m-%d %H:%M:%S}] $msg" | tee -a "$LOG_FILE"
 }
 
 die() {
-    log "${RED}КРИТИЧЕСКАЯ ОШИБКА:${RESET} $1"
+    log "${RED}CRITICAL ERROR:${RESET} $1"
     exit 1
 }
 
-# --- Проверки ---
+# --- Checks ---
 check_requirements() {
     local cmds=("sudo" "cp" "tee" "killall" "awk" "df")
     for cmd in "${cmds[@]}"; do
-        command -v "$cmd" >/dev/null || die "Не найдена команда: $cmd"
+        command -v "$cmd" >/dev/null || die "Command not found: $cmd"
     done
-    sudo -v || die "Нет прав sudo"
+    sudo -v || die "No sudo rights"
 }
 
-# --- Работа с диском ---
+# --- Working with disk ---
 check_space() {
     local dir=$(dirname "$1")
     local required=$2
@@ -45,68 +45,68 @@ check_space() {
     (( available_mb >= required )) || die "Нужно ${required}MB в ${dir} (доступно ${available_mb}MB)"
 }
 
-# --- Бэкапы ---
+# --- Backups ---
 backup_hosts() {
     check_space "$BACKUP_DIR" "$MIN_FREE_MB"
     
     local backup_file="$BACKUP_DIR/hosts.backup.$(date +%Y%m%d%H%M%S)"
-    log "${CYAN}Создаем бэкап:${RESET} $backup_file"
+    log "${CYAN}Create a backup:${RESET} $backup_file"
     
-    sudo cp "$HOSTS_FILE" "$backup_file" || die "Ошибка копирования"
+    sudo cp "$HOSTS_FILE" "$backup_file" || die "Copy error"
     
-    # Ротация бэкапов
+    # Backup rotation
     local backups=($BACKUP_DIR/hosts.backup.*(N.Om))
     if (( ${#backups} > MAX_BACKUPS )); then
-        log "${YELLOW}Удаляем старые копии...${RESET}"
+        log "${YELLOW}Delete old copies...${RESET}"
         for file in "${backups[@]:$MAX_BACKUPS}"; do
-            sudo rm -f "$file" && log "Удалено: $file"
+            sudo rm -f "$file" && log "Deleted: $file"
         done
     fi
 }
 
-# --- Операции с правами ---
+# --- Operations with rights ---
 check_permissions() {
-    log "${CYAN}Текущие права доступа:${RESET}"
+    log "${CYAN}Current access rights:${RESET}"
     print "------------------------------"
     ls -le "$HOSTS_FILE" | sudo tee -a "$LOG_FILE"
     print "------------------------------"
 }
 
 grant_permissions() {
-    print -P "%B${YELLOW}Дать права на запись файлу hosts? [y/N]: ${RESET}%b"
+    print -P "%B${YELLOW}Give write permissions to the hosts file? [y/N]: ${RESET}%b"
     read -q confirm
     print
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         sudo /bin/chmod +a "user:$(whoami):allow write" "$HOSTS_FILE" && \
-        log "${GREEN}Права на запись добавлены!${RESET}"
+        log "${GREEN}Write permissions added!${RESET}"
     else
-        log "${YELLOW}Отмена операции.${RESET}"
+        log "${YELLOW}Canceling an operation.${RESET}"
     fi
 }
 
 revoke_permissions() {
-    print -P "%B${YELLOW}Забрать права на запись? [y/N]: ${RESET}%b"
+    print -P "%B${YELLOW}Take away write permissions? [y/N]: ${RESET}%b"
     read -q confirm
     print
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         sudo /bin/chmod -a "user:$(whoami):allow write" "$HOSTS_FILE" && \
-        log "${GREEN}Права на запись отозваны!${RESET}"
+        log "${GREEN}Recording rights revoked!${RESET}"
     else
-        log "${YELLOW}Отмена операции.${RESET}"
+        log "${YELLOW}Canceling an operation.${RESET}"
     fi
 }
 
-# --- Основные операции ---
+# --- Basic Operations ---
 reset_hosts() {
     check_space "$LOG_FILE" "$MIN_FREE_MB"
 
-    print -P "%B${YELLOW}Сбросить файл hosts? [y/N]: ${RESET}%b"
+    print -P "%B${YELLOW}Reset hosts file? [y/N]: ${RESET}%b"
     read -q || return
     print
 
     backup_hosts
 
-    log "${CYAN}Сброс файла hosts...${RESET}"
+    log "${CYAN}Reset hosts file...${RESET}"
     sudo tee "$HOSTS_FILE" >/dev/null <<'EOF'
 ##
 # Host Database
@@ -120,66 +120,66 @@ reset_hosts() {
 EOF
 
     sudo killall -HUP mDNSResponder 2>/dev/null
-    log "${GREEN}Успешно сброшено!${RESET}"
+    log "${GREEN}Successfully reset!${RESET}"
     show_hosts
 }
 
 restore_hosts() {
     check_space "$LOG_FILE" "$MIN_FREE_MB"
 
-    print -P "%B${YELLOW}Восстановить из резервной копии? [y/N]: ${RESET}%b"
+    print -P "%B${YELLOW}Restore from backup? [y/N]: ${RESET}%b"
     read -q || return
     print
 
     local latest_backup=($BACKUP_DIR/hosts.backup.*(N.Om[1]))
-    [[ -n "$latest_backup" ]] || die "Резервные копии не найдены"
+    [[ -n "$latest_backup" ]] || die "No backups found"
 
-    log "${CYAN}Восстанавливаем из:${RESET} $latest_backup"
-    sudo cp "$latest_backup" "$HOSTS_FILE" || die "Ошибка восстановления"
+    log "${CYAN}Restoring from:${RESET} $latest_backup"
+    sudo cp "$latest_backup" "$HOSTS_FILE" || die "Restore Error"
 
     sudo killall -HUP mDNSResponder 2>/dev/null
-    log "${GREEN}Успешно восстановлено!${RESET}"
+    log "${GREEN}Successfully restored!${RESET}"
     show_hosts
 }
 
 show_hosts() {
-    log "${CYAN}Текущее содержимое:${RESET}"
+    log "${CYAN}Current content:${RESET}"
     print "------------------------------"
     sudo cat "$HOSTS_FILE"
     print "------------------------------"
 }
 
-# --- Интерфейс ---
+# --- Interface ---
 print_header() {
     clear
     print -P "%B${CYAN}==============================================%b"
-    print -P "%B${CYAN}        Менеджер файла hosts на MacBook        %b"
+    print -P "%B${CYAN}        Hosts file manager on MacBook        %b"
     print -P "%B${CYAN}==============================================%b"
     print
 }
 
 print_menu() {
-    print -P "%B${YELLOW}Выберите действие:%b"
-    print -P "  ${GREEN}1)${RESET} Сбросить к значениям по умолчанию"
-    print -P "  ${GREEN}2)${RESET} Восстановить из резервной копии"
-    print -P "  ${GREEN}3)${RESET} Показать текущее содержимое"
-    print -P "  ${GREEN}4)${RESET} Создать бэкап файла"
-    print -P "  ${CYAN}--- Управление правами ---${RESET}"
-    print -P "  ${GREEN}5)${RESET} Проверить права доступа"
-    print -P "  ${GREEN}6)${RESET} Разрешить редактирование"
-    print -P "  ${GREEN}7)${RESET} Запретить редактирование"
+    print -P "%B${YELLOW}Select action:%b"
+    print -P "  ${GREEN}1)${RESET} Reset to defaults"
+    print -P "  ${GREEN}2)${RESET} Restore from backup"
+    print -P "  ${GREEN}3)${RESET} Show current content"
+    print -P "  ${GREEN}4)${RESET} Create a backup file"
+    print -P "  ${CYAN}--- Rights management ---${RESET}"
+    print -P "  ${GREEN}5)${RESET} Check permissions"
+    print -P "  ${GREEN}6)${RESET} Allow editing"
+    print -P "  ${GREEN}7)${RESET} Disable editing"
     print -P "  ${CYAN}--------------------------${RESET}"
-    print -P "  ${GREEN}8)${RESET} Выйти из программы"
+    print -P "  ${GREEN}8)${RESET} Exit the program"
 }
 
-# --- Главный цикл ---
+# --- Main loop ---
 main() {
     check_requirements
 
     while true; do
         print_header
         print_menu
-        print -P "%B${YELLOW}Ваш выбор: ${RESET}%b"
+        print -P "%B${YELLOW}Your choice: ${RESET}%b"
         read -r choice
 
         case "$choice" in
@@ -191,15 +191,15 @@ main() {
             6) grant_permissions ;;
             7) revoke_permissions ;;
             8) break ;;
-            *) print -P "${RED}Некорректный выбор!${RESET}"; sleep 1 ;;
+            *) print -P "${RED}Incorrect choice!${RESET}"; sleep 1 ;;
         esac
 
-        print -P "\n${CYAN}Нажмите Enter для продолжения...${RESET}"
+        print -P "\n${CYAN}Press Enter to continue...${RESET}"
         read -r
     done
 
-    log "${GREEN}Работа завершена.${RESET}"
+    log "${GREEN}Work completed.${RESET}"
 }
 
-# --- Точка входа ---
+# --- Entry point ---
 main "$@"
