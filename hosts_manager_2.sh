@@ -30,7 +30,7 @@ die() {
 
 # --- Checks ---
 check_requirements() {
-    local cmds=("sudo" "cp" "tee" "killall" "awk" "df" "sed" "ls" "head")
+    local cmds=("sudo" "cp" "tee" "killall" "awk" "df" "sed" "ls" "head" "grep")
     for cmd in "${cmds[@]}"; do
         command -v "$cmd" >/dev/null || die "Command not found: $cmd"
     done
@@ -141,11 +141,138 @@ remove_host_entry() {
     fi
 
     backup_hosts
-    # sed -i not portable on macOS, use backup file and move
     sudo sed "/$target/d" "$HOSTS_FILE" | sudo tee "$HOSTS_FILE.tmp" >/dev/null
     sudo mv "$HOSTS_FILE.tmp" "$HOSTS_FILE"
     log "${GREEN}Removed entries matching: $target${RESET}"
     sudo killall -HUP mDNSResponder 2>/dev/null
+}
+
+# --- Validation and checking ---
+
+validate_hosts() {
+    print "${CYAN}Validating hosts file syntax...${RESET}"
+    local errors=0
+    local line_num=0
+
+    # Regex for IPv4 and IPv6
+    local ipv4_pattern='^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'
+    local ipv6_pattern='^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}'
+
+    while IFS= read -r line; do
+        ((line_num++))
+
+        # Skip comments and empty lines
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
+
+        # Split line into parts
+        local parts=(${=line})
+        local ip=${parts[1]}
+        local hostnames=(${parts[2,-1]})
+
+        # Check IP format (IPv4 or IPv6)
+        if ! [[ "$ip" =~ $ipv4_pattern || "$ip" =~ $ipv6_pattern ]]; then
+            print "${RED}Syntax error on line $line_num (invalid IP):${RESET} $line"
+            ((errors++))
+            continue
+        fi
+
+        # Check presence of hostnames
+        if (( ${#hostnames} == 0 )); then
+            print "${RED}Syntax error on line $line_num (no hostnames):${RESET} $line"
+            ((errors++))
+        fi
+
+    done < "$HOSTS_FILE"
+
+    if (( errors == 0 )); then
+        print "${GREEN}No syntax errors found.${RESET}"
+    else
+        print "${RED}Found $errors syntax error(s).${RESET}"
+    fi
+}
+
+check_duplicates() {
+    print "${CYAN}Checking for duplicate IP-hostname pairs...${RESET}"
+
+    local tmpfile=$(mktemp)
+
+    awk '
+        BEGIN {
+            OFS = "|"
+            print "line_num", "ip", "hostname", "full_line" > "'"$tmpfile"'"
+        }
+        /^#/ { next }
+        /^[[:space:]]*$/ { next }
+        {
+            ip = $1
+            for (i=2; i<=NF; i++) {
+                if ($i ~ /^#/) break
+                print NR, ip, $i, $0 >> "'"$tmpfile"'"
+            }
+        }
+    ' "$HOSTS_FILE"
+
+    local duplicates_report=$(
+        awk -F'|' '
+            NR == 1 { next }
+            {
+                pair = $2 " " $3
+                count[pair]++
+                lines[pair] = lines[pair] $1 ", "
+                entries[pair] = entries[pair] $4 "\n"
+            }
+            END {
+                for (pair in count) {
+                    if (count[pair] > 1) {
+                        printf "Duplicate: %s\n", pair
+                        printf "Lines: %s\n", substr(lines[pair], 1, length(lines[pair])-2)
+                        printf "Entries:\n%s\n", entries[pair]
+                        print "------------------------"
+                    }
+                }
+            }
+        ' "$tmpfile"
+    )
+
+    rm "$tmpfile"
+
+    if [[ -z "$duplicates_report" ]]; then
+        print "${GREEN}No duplicate IP-hostname pairs found.${RESET}"
+    else
+        print "${YELLOW}$duplicates_report${RESET}"
+    fi
+}
+
+# --- Export / Import ---
+
+export_hosts() {
+    print -P "%B${YELLOW}Enter file path to export hosts to:${RESET}%b"
+    read export_path
+    if [[ -z "$export_path" ]]; then
+        log "${RED}Export path cannot be empty.${RESET}"
+        return
+    fi
+
+    sudo cp "$HOSTS_FILE" "$export_path" && log "${GREEN}Hosts exported to $export_path${RESET}"
+}
+
+import_hosts() {
+    print -P "%B${YELLOW}Enter file path to import hosts from:${RESET}%b"
+    read import_path
+    if [[ -z "$import_path" ]]; then
+        log "${RED}Import path cannot be empty.${RESET}"
+        return
+    fi
+    if [[ ! -f "$import_path" ]]; then
+        log "${RED}File not found: $import_path${RESET}"
+        return
+    fi
+
+    backup_hosts
+    sudo cp "$import_path" "$HOSTS_FILE" || die "Import error"
+    sudo killall -HUP mDNSResponder 2>/dev/null
+    log "${GREEN}Hosts imported from $import_path${RESET}"
+    show_hosts
 }
 
 # --- Basic Operations ---
@@ -232,10 +359,14 @@ print_menu() {
     print -P "  ${GREEN}4)${RESET} Create a backup file"
     print -P "  ${GREEN}5)${RESET} Add host entry"
     print -P "  ${GREEN}6)${RESET} Remove host entry"
+    print -P "  ${GREEN}7)${RESET} Validate hosts file syntax"
+    print -P "  ${GREEN}8)${RESET} Check duplicate IP-hostname pairs"
+    print -P "  ${GREEN}9)${RESET} Export hosts to file"
+    print -P "  ${GREEN}10)${RESET} Import hosts from file"
     print -P "  ${CYAN}--- Rights management ---${RESET}"
-    print -P "  ${GREEN}7)${RESET} Check permissions"
-    print -P "  ${GREEN}8)${RESET} Allow editing"
-    print -P "  ${GREEN}9)${RESET} Disable editing"
+    print -P "  ${GREEN}11)${RESET} Check permissions"
+    print -P "  ${GREEN}12)${RESET} Allow editing"
+    print -P "  ${GREEN}13)${RESET} Disable editing"
     print -P "  ${CYAN}--------------------------${RESET}"
     print -P "  ${GREEN}0)${RESET} Exit the program"
 }
@@ -257,9 +388,13 @@ main() {
             4) backup_hosts ;;
             5) add_host_entry ;;
             6) remove_host_entry ;;
-            7) check_permissions ;;
-            8) grant_permissions ;;
-            9) revoke_permissions ;;
+            7) validate_hosts ;;
+            8) check_duplicates ;;
+            9) export_hosts ;;
+            10) import_hosts ;;
+            11) check_permissions ;;
+            12) grant_permissions ;;
+            13) revoke_permissions ;;
             0) break ;;
             *) print -P "${RED}Incorrect choice!${RESET}"; sleep 1 ;;
         esac
