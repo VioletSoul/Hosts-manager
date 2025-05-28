@@ -1,3 +1,12 @@
+![Shell](https://img.shields.io/badge/Shell-Bash-4E9A06?style=flat&logo=gnu-bash&logoColor=white)
+![Zsh](https://img.shields.io/badge/Zsh-✓-blue)
+![macOS](https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white)
+![Hosts File](https://img.shields.io/badge/Hosts%20File-✓-purple)
+![Backup](https://img.shields.io/badge/Backup-✓-orange)
+![IPv4](https://img.shields.io/badge/IPv4-✓-yellowgreen)
+![IPv6](https://img.shields.io/badge/IPv6-✓-lightblue)
+![Permission Check](https://img.shields.io/badge/Permission%20Check-✓-red)
+
 # ************
 A compact Bash module for reading, permission checking, and backing up the hosts file on your macOS when needed.
 The script is adapted for the Zsh shell.
