@@ -6,6 +6,9 @@
 ![IPv4](https://img.shields.io/badge/IPv4-✓-yellowgreen)
 ![IPv6](https://img.shields.io/badge/IPv6-✓-lightblue)
 ![Permission Check](https://img.shields.io/badge/Permission%20Check-✓-red)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Repo Size](https://img.shields.io/github/repo-size/VioletSoul/Hosts-manager)
+![Code Size](https://img.shields.io/github/languages/code-size/VioletSoul/Hosts-manager)
 
 # ************
 A compact Bash module for reading, permission checking, and backing up the hosts file on your macOS when needed.
